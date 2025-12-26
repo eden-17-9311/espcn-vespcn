@@ -77,6 +77,12 @@ class TrainValidImageDataset(Dataset):
         gt_crop_y_tensor = imgproc.image_to_tensor(gt_crop_y_image, False, False)
         lr_crop_y_tensor = imgproc.image_to_tensor(lr_crop_y_image, False, False)
 
+        # ================== [新增代码开始] ==================
+        # 模拟 Early Fusion：将 LR 图像复制 3 份并在通道维度拼接
+        # 原始形状: [1, H, W] -> 新形状: [3, H, W]
+        lr_crop_y_tensor = torch.cat([lr_crop_y_tensor, lr_crop_y_tensor, lr_crop_y_tensor], dim=0)
+        # ================== [新增代码结束] ==================
+
         return {"gt": gt_crop_y_tensor, "lr": lr_crop_y_tensor}
 
     def __len__(self) -> int:
@@ -99,7 +105,17 @@ class TestImageDataset(Dataset):
 
     def __getitem__(self, batch_index: int) -> [torch.Tensor, torch.Tensor]:
         # Read a batch of image data
-        gt_image = cv2.imread(self.gt_image_file_names[batch_index]).astype(np.float32) / 255.
+        # === 修改开始 ===
+        image_path = self.gt_image_file_names[batch_index]
+        # 尝试读取图片
+        img = cv2.imread(image_path)
+
+        # 检查是否读取成功
+        if img is None:
+            raise ValueError(f"【读取失败】无法找到或打开图片: {image_path}\n请检查路径是否存在，或路径中是否包含中文/特殊字符。")
+
+        gt_image = img.astype(np.float32) / 255.
+        # === 修改结束 ===
         lr_image = cv2.imread(self.lr_image_file_names[batch_index]).astype(np.float32) / 255.
 
         # BGR convert Y channel
@@ -110,6 +126,11 @@ class TestImageDataset(Dataset):
         # Note: The range of input and output is between [0, 1]
         gt_y_tensor = imgproc.image_to_tensor(gt_y_image, False, False)
         lr_y_tensor = imgproc.image_to_tensor(lr_y_image, False, False)
+
+        # ================== [新增代码开始] ==================
+        # 模拟 Early Fusion：验证集也要变成 3 通道输入
+        lr_y_tensor = torch.cat([lr_y_tensor, lr_y_tensor, lr_y_tensor], dim=0)
+        # ================== [新增代码结束] ==================
 
         return {"gt": gt_y_tensor, "lr": lr_y_tensor}
 

@@ -28,23 +28,23 @@ cudnn.benchmark = True
 # When evaluating the performance of the SR model, whether to verify only the Y channel image data
 only_test_y_channel = False
 # Model architecture name
-model_arch_name = "espcn_x2"
+model_arch_name = "espcn_x4"
 # Model arch config
-in_channels = 1
+in_channels = 3
 out_channels = 1
 channels = 64
-upscale_factor = 2
+upscale_factor = 4
 # Current configuration parameter method
-mode = "test"
+mode = "train"
 # Experiment name, easy to save weights and log files
-exp_name = "ESPCN_x2-Set14"
+exp_name = "ESPCN_x4-T91"
 
 if mode == "train":
     # Dataset address
     train_gt_images_dir = f"./data/T91/ESPCN/train"
 
-    test_gt_images_dir = f"./data/Set14/GTmod12"
-    test_lr_images_dir = f"./data/Set14/LRbicx{upscale_factor}"
+    test_gt_images_dir = f"./data/Set5/GTmod12"
+    test_lr_images_dir = f"./data/Set5/LRbicx{upscale_factor}"
 
     gt_image_size = int(17 * upscale_factor)
     batch_size = 16
@@ -81,8 +81,8 @@ if mode == "train":
 
 if mode == "test":
     # Test data address
-    lr_dir = f"./data/Set14/LRbicx{upscale_factor}"
+    lr_dir = f"./data/Set5/LRbicx{upscale_factor}"
     sr_dir = f"./results/test/{exp_name}"
-    gt_dir = "./data/Set14/GTmod12"
+    gt_dir = "./data/Set5/GTmod12"
 
-    model_weights_path = "./results/pretrained_models/ESPCN_x2-T91-da809cd7.pth.tar"
+    model_weights_path = "./results/pretrained_models/ESPCN_x4-T91-64bf5ee4.pth.tar"
