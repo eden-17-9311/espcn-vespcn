@@ -75,9 +75,24 @@ def main() -> None:
         gt_y_tensor, gt_cb_image, gt_cr_image = imgproc.preprocess_one_image(gt_image_path, config.device)
         lr_y_tensor, lr_cb_image, lr_cr_image = imgproc.preprocess_one_image(lr_image_path, config.device)
 
+        # ==================== Early Fusion ====================
+        # 构建多帧输入用于推理
+        # lr_y_tensor 形状: [1, 1, H, W]
+        lr_y_np = lr_y_tensor.squeeze().cpu().numpy()  # [H, W]
+        
+        # 使用高斯模糊模拟相邻帧
+        frame_prev = cv2.GaussianBlur(lr_y_np, (3, 3), 1.0)  # 前一帧
+        frame_curr = lr_y_np  # 当前帧
+        frame_next = cv2.GaussianBlur(lr_y_np, (5, 5), 1.0)  # 后一帧
+        
+        # 堆叠成 [1, 3, H, W]
+        lr_multi_frame = np.stack([frame_prev, frame_curr, frame_next], axis=0)
+        lr_multi_frame = torch.from_numpy(lr_multi_frame).unsqueeze(0).to(config.device)
+        # ==================== Early Fusion 结束 ====================
+
         # Only reconstruct the Y channel image data.
         with torch.no_grad():
-            sr_y_tensor = g_model(lr_y_tensor)
+            sr_y_tensor = g_model(lr_multi_frame)
 
         # --- 新增/修改开始: 尺寸对齐 ---
         # 获取超分后的实际尺寸 (Height, Width)

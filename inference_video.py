@@ -19,8 +19,8 @@ def main(args):
         print("使用设备: CPU")
 
     # 构建模型
-    # 注意：in_channels=1, out_channels=1, channels=64 是 ESPCN 的标准配置
-    sr_model = model.__dict__[args.model_arch_name](in_channels=1, out_channels=1, channels=64)
+    # Early Fusion ESPCN: in_channels=3 (多帧融合)
+    sr_model = model.__dict__[args.model_arch_name](in_channels=3, out_channels=1, channels=64)
     sr_model = sr_model.to(device=device)
 
     # 加载权重
@@ -65,32 +65,60 @@ def main(args):
     print(f"{'='*30}")
 
     # ==================================================================
-    # 3. 高速推理循环
+    # 3. 高速推理循环（Early Fusion: 多帧处理）
     # ==================================================================
     frame_count = 0
     start_time = time.time()
+    
+    # 缓存前后帧用于 Early Fusion
+    frame_buffer = []  # 存储 [前一帧, 当前帧, 后一帧]
 
     with torch.no_grad():
+        # 预读第一帧
+        ret, prev_frame = cap.read()
+        if not ret:
+            print("错误：无法读取第一帧")
+            return
+        
+        # 转 Y 通道
+        img_ycrcb = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2YCrCb)
+        prev_y, _, _ = cv2.split(img_ycrcb)
+        
         while True:
-            ret, frame = cap.read()
+            ret, curr_frame = cap.read()
             if not ret:
                 break
 
-            # [优化1] 使用 OpenCV 原生函数进行颜色空间转换 (极快)
-            # 注意: OpenCV 的 YCrCb 顺序是 Y, Cr, Cb
-            img_ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
-            y, cr, cb = cv2.split(img_ycrcb)
+            # 转 Y 通道并归一化
+            img_ycrcb = cv2.cvtColor(curr_frame, cv2.COLOR_BGR2YCrCb)
+            curr_y, cr, cb = cv2.split(img_ycrcb)
+            
+            # 预读下一帧（用于 Early Fusion）
+            ret_next, next_frame = cap.read()
+            if ret_next:
+                img_ycrcb_next = cv2.cvtColor(next_frame, cv2.COLOR_BGR2YCrCb)
+                next_y, _, _ = cv2.split(img_ycrcb_next)
+            else:
+                # 如果没有下一帧，使用当前帧
+                next_y = curr_y
 
-            # [优化2] 仅将 Y 通道转为浮点数并送入 GPU
-            # 归一化 [0, 255] -> [0.0, 1.0]
-            img_y = y.astype(np.float32) / 255.0
-            tensor_y = torch.from_numpy(img_y).view(1, 1, height, width).to(device, non_blocking=True)
-
+            # ==================== Early Fusion ====================
+            # 构建多帧输入：[前一帧, 当前帧, 后一帧]
+            prev_y_norm = prev_y.astype(np.float32) / 255.0
+            curr_y_norm = curr_y.astype(np.float32) / 255.0
+            next_y_norm = next_y.astype(np.float32) / 255.0
+            
+            # 堆叠成 [3, H, W]
+            tensor_multi_frame = torch.from_numpy(
+                np.stack([prev_y_norm, curr_y_norm, next_y_norm], axis=0)
+            ).unsqueeze(0).to(device, non_blocking=True)  # [1, 3, H, W]
+            
             if args.half and device.type == 'cuda':
-                tensor_y = tensor_y.half()
+                tensor_multi_frame = tensor_multi_frame.half()
 
             # --- 模型推理 ---
-            out_tensor = sr_model(tensor_y)
+            out_tensor = sr_model(tensor_multi_frame)
+            # ==================== Early Fusion 结束 ====================
 
             # [优化3] 后处理：转回 CPU 并恢复为 uint8
             out_y = out_tensor.squeeze().float().cpu().numpy()
@@ -108,12 +136,17 @@ def main(args):
             out.write(out_frame)
 
             frame_count += 1
+            prev_y = curr_y  # 更新前一帧
             
             # 每 10 帧打印一次进度，减少 I/O 刷新
             if frame_count % 10 == 0:
                 elapsed = time.time() - start_time
                 current_fps = frame_count / elapsed
                 print(f"\r进度: {frame_count}/{total_frames} | FPS: {current_fps:.2f}", end="")
+            
+            # 如果没有下一帧，退出
+            if not ret_next:
+                break
 
     # ==================================================================
     # 4. 统计结果

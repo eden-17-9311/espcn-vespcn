@@ -30,6 +30,7 @@ only_test_y_channel = False
 # Model architecture name
 model_arch_name = "espcn_x4"
 # Model arch config
+# Early Fusion ESPCN: 3 帧在低分辨率空间融合，所以 in_channels = 3
 in_channels = 3
 out_channels = 1
 channels = 64

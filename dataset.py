@@ -77,11 +77,25 @@ class TrainValidImageDataset(Dataset):
         gt_crop_y_tensor = imgproc.image_to_tensor(gt_crop_y_image, False, False)
         lr_crop_y_tensor = imgproc.image_to_tensor(lr_crop_y_image, False, False)
 
-        # ================== [新增代码开始] ==================
-        # 模拟 Early Fusion：将 LR 图像复制 3 份并在通道维度拼接
+        # ================== Early Fusion: 多帧融合 ==================
+        # Early Fusion ESPCN: 在低分辨率空间融合多帧信息
+        # 使用当前帧的不同处理版本模拟多帧：
+        # - lr_crop_y_tensor: 原始 LR 帧
+        # - 使用高斯模糊模拟相邻帧的信息
         # 原始形状: [1, H, W] -> 新形状: [3, H, W]
-        lr_crop_y_tensor = torch.cat([lr_crop_y_tensor, lr_crop_y_tensor, lr_crop_y_tensor], dim=0)
-        # ================== [新增代码结束] ==================
+        lr_frame_center = lr_crop_y_tensor  # 中心帧
+        lr_frame_prev = imgproc.image_to_tensor(
+            cv2.GaussianBlur(lr_crop_y_image, (3, 3), 1.0), 
+            False, False
+        )  # 前一帧（模拟）
+        lr_frame_next = imgproc.image_to_tensor(
+            cv2.GaussianBlur(lr_crop_y_image, (5, 5), 1.0), 
+            False, False
+        )  # 后一帧（模拟）
+        
+        # 在通道维度拼接多帧：[3, H, W]
+        lr_crop_y_tensor = torch.cat([lr_frame_prev, lr_frame_center, lr_frame_next], dim=0)
+        # ================== Early Fusion 结束 ==================
 
         return {"gt": gt_crop_y_tensor, "lr": lr_crop_y_tensor}
 
@@ -105,7 +119,6 @@ class TestImageDataset(Dataset):
 
     def __getitem__(self, batch_index: int) -> [torch.Tensor, torch.Tensor]:
         # Read a batch of image data
-        # === 修改开始 ===
         image_path = self.gt_image_file_names[batch_index]
         # 尝试读取图片
         img = cv2.imread(image_path)
@@ -115,7 +128,6 @@ class TestImageDataset(Dataset):
             raise ValueError(f"【读取失败】无法找到或打开图片: {image_path}\n请检查路径是否存在，或路径中是否包含中文/特殊字符。")
 
         gt_image = img.astype(np.float32) / 255.
-        # === 修改结束 ===
         lr_image = cv2.imread(self.lr_image_file_names[batch_index]).astype(np.float32) / 255.
 
         # BGR convert Y channel
@@ -127,10 +139,21 @@ class TestImageDataset(Dataset):
         gt_y_tensor = imgproc.image_to_tensor(gt_y_image, False, False)
         lr_y_tensor = imgproc.image_to_tensor(lr_y_image, False, False)
 
-        # ================== [新增代码开始] ==================
-        # 模拟 Early Fusion：验证集也要变成 3 通道输入
-        lr_y_tensor = torch.cat([lr_y_tensor, lr_y_tensor, lr_y_tensor], dim=0)
-        # ================== [新增代码结束] ==================
+        # ================== Early Fusion: 多帧融合 ==================
+        # Early Fusion ESPCN: 在低分辨率空间融合多帧信息
+        lr_frame_center = lr_y_tensor  # 中心帧
+        lr_frame_prev = imgproc.image_to_tensor(
+            cv2.GaussianBlur(lr_y_image, (3, 3), 1.0), 
+            False, False
+        )  # 前一帧（模拟）
+        lr_frame_next = imgproc.image_to_tensor(
+            cv2.GaussianBlur(lr_y_image, (5, 5), 1.0), 
+            False, False
+        )  # 后一帧（模拟）
+        
+        # 在通道维度拼接多帧：[3, H, W]
+        lr_y_tensor = torch.cat([lr_frame_prev, lr_frame_center, lr_frame_next], dim=0)
+        # ================== Early Fusion 结束 ==================
 
         return {"gt": gt_y_tensor, "lr": lr_y_tensor}
 
