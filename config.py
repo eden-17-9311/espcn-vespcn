@@ -30,22 +30,47 @@ only_test_y_channel = False
 # Model architecture name
 model_arch_name = "espcn_x4"
 # Model arch config
-# Early Fusion ESPCN: 3 帧在低分辨率空间融合，所以 in_channels = 3
+# Early Fusion ESPCN: 多帧在低分辨率空间融合
+# 对于视频数据：in_channels = 3（前帧、当前帧、后帧）
+# 可调整为其他值以支持不同数量的帧
 in_channels = 3
 out_channels = 1
 channels = 64
 upscale_factor = 4
+# 视频帧数配置（必须与 in_channels 一致）
+num_frames = 3
 # Current configuration parameter method
 mode = "train"
 # Experiment name, easy to save weights and log files
-exp_name = "ESPCN_x4-T91"
+exp_name = "ESPCN_x4_EarlyFusion_Vimeo90K"
+
+# ==================== 数据集类型选择 ====================
+# "image": 使用 TrainValidImageDataset（单帧）- 用于 T91、DIV2K 等图像数据集
+# "video": 使用 TrainValidVideoDataset（多帧）- 用于 Vimeo90K 等视频数据集
+dataset_type = "video"
+# ====================================================
 
 if mode == "train":
-    # Dataset address
+    # ==================== 图像数据集配置 ====================
+    # 使用 TrainValidImageDataset 时的路径配置
     train_gt_images_dir = f"./data/T91/ESPCN/train"
-
     test_gt_images_dir = f"./data/Set5/GTmod12"
     test_lr_images_dir = f"./data/Set5/LRbicx{upscale_factor}"
+    # ====================================================
+    
+    # ==================== 视频数据集配置 ====================
+    # 使用 TrainValidVideoDataset 时的路径配置
+    # Vimeo90K 格式示例：
+    # train_gt_video_dir/
+    #   sequence_1/
+    #     im1.png, im2.png, im3.png, ...
+    #   sequence_2/
+    #     im1.png, im2.png, im3.png, ...
+    # ...
+    train_gt_video_dir = f"./data/Vimeo90K/vimeo_septuplet/sequences"
+    test_gt_video_dir = f"./data/Vimeo90K/vimeo_septuplet/test/sequences"
+    test_lr_video_dir = f"./data/Vimeo90K/vimeo_septuplet/test/sequences_lrx{upscale_factor}"
+    # ====================================================
 
     gt_image_size = int(17 * upscale_factor)
     batch_size = 16

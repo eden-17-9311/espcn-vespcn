@@ -24,7 +24,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import config
 import model
-from dataset import CUDAPrefetcher, TrainValidImageDataset, TestImageDataset
+from dataset import CUDAPrefetcher, TrainValidImageDataset, TestImageDataset, TrainValidVideoDataset, TestVideoDataset
 from image_quality_assessment import PSNR, SSIM
 from utils import load_state_dict, make_directory, save_checkpoint, AverageMeter, ProgressMeter
 
@@ -131,11 +131,26 @@ def main():
 
 def load_dataset() -> [CUDAPrefetcher, CUDAPrefetcher]:
     # Load train, test and valid datasets
-    train_datasets = TrainValidImageDataset(config.train_gt_images_dir,
-                                            config.gt_image_size,
-                                            config.upscale_factor,
-                                            "Train")
-    test_datasets = TestImageDataset(config.test_gt_images_dir, config.test_lr_images_dir)
+    # 支持两种数据集：图像数据集 和 视频数据集
+    if config.dataset_type == "image":
+        print(f"Loading Image Dataset: {config.dataset_type}")
+        train_datasets = TrainValidImageDataset(config.train_gt_images_dir,
+                                                config.gt_image_size,
+                                                config.upscale_factor,
+                                                "Train")
+        test_datasets = TestImageDataset(config.test_gt_images_dir, config.test_lr_images_dir)
+    elif config.dataset_type == "video":
+        print(f"Loading Video Dataset: {config.dataset_type}")
+        train_datasets = TrainValidVideoDataset(config.train_gt_video_dir,
+                                                config.gt_image_size,
+                                                config.upscale_factor,
+                                                "Train",
+                                                num_frames=config.num_frames)
+        test_datasets = TestVideoDataset(config.test_gt_video_dir,
+                                        config.test_lr_video_dir,
+                                        num_frames=config.num_frames)
+    else:
+        raise ValueError(f"Unsupported dataset_type: {config.dataset_type}. Use 'image' or 'video'.")
 
     # Generator all dataloader
     train_dataloader = DataLoader(train_datasets,

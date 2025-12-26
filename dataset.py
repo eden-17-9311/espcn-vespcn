@@ -14,6 +14,8 @@
 import os
 import queue
 import threading
+from pathlib import Path
+from typing import List
 
 import cv2
 import numpy as np
@@ -25,12 +27,13 @@ import imgproc
 
 __all__ = [
     "TrainValidImageDataset", "TestImageDataset",
+    "TrainValidVideoDataset", "TestVideoDataset",
     "PrefetchGenerator", "PrefetchDataLoader", "CPUPrefetcher", "CUDAPrefetcher",
 ]
 
 
 class TrainValidImageDataset(Dataset):
-    """Define training/valid dataset loading methods.
+    """Define training/valid dataset loading methods for single images.
 
     Args:
         gt_image_dir (str): Train/Valid ground-truth dataset address.
@@ -77,34 +80,124 @@ class TrainValidImageDataset(Dataset):
         gt_crop_y_tensor = imgproc.image_to_tensor(gt_crop_y_image, False, False)
         lr_crop_y_tensor = imgproc.image_to_tensor(lr_crop_y_image, False, False)
 
-        # ================== Early Fusion: 多帧融合 ==================
-        # Early Fusion ESPCN: 在低分辨率空间融合多帧信息
-        # 使用当前帧的不同处理版本模拟多帧：
-        # - lr_crop_y_tensor: 原始 LR 帧
-        # - 使用高斯模糊模拟相邻帧的信息
-        # 原始形状: [1, H, W] -> 新形状: [3, H, W]
-        lr_frame_center = lr_crop_y_tensor  # 中心帧
-        lr_frame_prev = imgproc.image_to_tensor(
-            cv2.GaussianBlur(lr_crop_y_image, (3, 3), 1.0), 
-            False, False
-        )  # 前一帧（模拟）
-        lr_frame_next = imgproc.image_to_tensor(
-            cv2.GaussianBlur(lr_crop_y_image, (5, 5), 1.0), 
-            False, False
-        )  # 后一帧（模拟）
-        
-        # 在通道维度拼接多帧：[3, H, W]
-        lr_crop_y_tensor = torch.cat([lr_frame_prev, lr_frame_center, lr_frame_next], dim=0)
-        # ================== Early Fusion 结束 ==================
-
         return {"gt": gt_crop_y_tensor, "lr": lr_crop_y_tensor}
 
     def __len__(self) -> int:
         return len(self.image_file_names)
 
 
+class TrainValidVideoDataset(Dataset):
+    """Early Fusion Video Dataset: 读取真实的连续视频帧进行多帧融合训练
+    
+    支持 Vimeo90K 格式：
+    dataset/
+        sequence_1/
+            im1.png (GT)
+            im2.png (GT)
+            im3.png (GT)
+            im4.png (GT)
+            ...
+        sequence_2/
+            im1.png
+            im2.png
+            ...
+    
+    Args:
+        gt_video_dir (str): 包含视频帧序列的目录
+        gt_image_size (int): 裁剪的GT分辨率
+        upscale_factor (int): 超分倍率
+        mode (str): "Train" 或 "Valid"
+        num_frames (int): 每个样本使用的帧数（默认3）
+    """
+
+    def __init__(
+            self,
+            gt_video_dir: str,
+            gt_image_size: int,
+            upscale_factor: int,
+            mode: str,
+            num_frames: int = 3,
+    ) -> None:
+        super(TrainValidVideoDataset, self).__init__()
+        self.gt_video_dir = gt_video_dir
+        self.gt_image_size = gt_image_size
+        self.upscale_factor = upscale_factor
+        self.mode = mode
+        self.num_frames = num_frames
+        
+        # 收集所有视频序列目录
+        self.sequences = []
+        self.frame_paths = []  # 每个序列的所有帧路径列表
+        
+        for seq_dir in sorted(os.listdir(gt_video_dir)):
+            seq_path = os.path.join(gt_video_dir, seq_dir)
+            if not os.path.isdir(seq_path):
+                continue
+            
+            # 获取该序列中的所有帧
+            frames = sorted([f for f in os.listdir(seq_path) if f.endswith('.png')])
+            if len(frames) < num_frames:
+                continue  # 跳过帧数不足的序列
+            
+            self.sequences.append(seq_dir)
+            frame_paths_for_seq = [os.path.join(seq_path, f) for f in frames]
+            self.frame_paths.append(frame_paths_for_seq)
+        
+        # 计算总的训练样本数（每个序列产生多个样本）
+        self.sample_indices = []
+        for seq_idx, frame_list in enumerate(self.frame_paths):
+            # 每个序列可以产生 (总帧数 - num_frames + 1) 个样本
+            num_samples = len(frame_list) - num_frames + 1
+            for start_idx in range(num_samples):
+                self.sample_indices.append((seq_idx, start_idx))
+    
+    def __getitem__(self, batch_index: int) -> dict:
+        seq_idx, start_idx = self.sample_indices[batch_index]
+        frame_paths = self.frame_paths[seq_idx]
+        
+        # 读取连续的 num_frames 帧
+        frames_gt = []
+        frames_lr = []
+        
+        for i in range(self.num_frames):
+            frame_path = frame_paths[start_idx + i]
+            gt_image = cv2.imread(frame_path).astype(np.float32) / 255.
+            
+            # 数据增强（仅在 Train 模式）
+            if self.mode == "Train":
+                gt_image = imgproc.random_crop(gt_image, self.gt_image_size)
+            elif self.mode == "Valid":
+                gt_image = imgproc.center_crop(gt_image, self.gt_image_size)
+            else:
+                raise ValueError("Unsupported data processing model, please use `Train` or `Valid`.")
+            
+            # 生成 LR 版本
+            lr_image = imgproc.image_resize(gt_image, 1 / self.upscale_factor)
+            
+            # 转 Y 通道
+            gt_y = imgproc.bgr_to_ycbcr(gt_image, only_use_y_channel=True)
+            lr_y = imgproc.bgr_to_ycbcr(lr_image, only_use_y_channel=True)
+            
+            # 转 Tensor
+            gt_y_tensor = imgproc.image_to_tensor(gt_y, False, False)  # [1, H, W]
+            lr_y_tensor = imgproc.image_to_tensor(lr_y, False, False)  # [1, H, W]
+            
+            frames_gt.append(gt_y_tensor)
+            frames_lr.append(lr_y_tensor)
+        
+        # 在通道维度拼接多帧
+        # 从 [1, H, W] x num_frames 拼接为 [num_frames, H, W]
+        gt_multi_frame = torch.cat(frames_gt, dim=0)  # [num_frames, H, W]
+        lr_multi_frame = torch.cat(frames_lr, dim=0)  # [num_frames, H, W]
+        
+        return {"gt": gt_multi_frame, "lr": lr_multi_frame}
+    
+    def __len__(self) -> int:
+        return len(self.sample_indices)
+
+
 class TestImageDataset(Dataset):
-    """Define Test dataset loading methods.
+    """Define Test dataset loading methods for single images.
 
     Args:
         test_gt_images_dir (str): ground truth image in test image
@@ -139,26 +232,99 @@ class TestImageDataset(Dataset):
         gt_y_tensor = imgproc.image_to_tensor(gt_y_image, False, False)
         lr_y_tensor = imgproc.image_to_tensor(lr_y_image, False, False)
 
-        # ================== Early Fusion: 多帧融合 ==================
-        # Early Fusion ESPCN: 在低分辨率空间融合多帧信息
-        lr_frame_center = lr_y_tensor  # 中心帧
-        lr_frame_prev = imgproc.image_to_tensor(
-            cv2.GaussianBlur(lr_y_image, (3, 3), 1.0), 
-            False, False
-        )  # 前一帧（模拟）
-        lr_frame_next = imgproc.image_to_tensor(
-            cv2.GaussianBlur(lr_y_image, (5, 5), 1.0), 
-            False, False
-        )  # 后一帧（模拟）
-        
-        # 在通道维度拼接多帧：[3, H, W]
-        lr_y_tensor = torch.cat([lr_frame_prev, lr_frame_center, lr_frame_next], dim=0)
-        # ================== Early Fusion 结束 ==================
-
         return {"gt": gt_y_tensor, "lr": lr_y_tensor}
 
     def __len__(self) -> int:
         return len(self.gt_image_file_names)
+
+
+class TestVideoDataset(Dataset):
+    """Early Fusion Video Dataset for testing: 读取真实的连续视频帧
+    
+    Args:
+        gt_video_dir (str): 包含视频帧序列的目录
+        lr_video_dir (str): 包含LR视频帧序列的目录
+        num_frames (int): 每个样本使用的帧数（默认3）
+    """
+
+    def __init__(
+            self,
+            gt_video_dir: str,
+            lr_video_dir: str,
+            num_frames: int = 3,
+    ) -> None:
+        super(TestVideoDataset, self).__init__()
+        self.gt_video_dir = gt_video_dir
+        self.lr_video_dir = lr_video_dir
+        self.num_frames = num_frames
+        
+        # 收集所有视频序列目录
+        self.sequences = []
+        self.gt_frame_paths = []
+        self.lr_frame_paths = []
+        
+        for seq_dir in sorted(os.listdir(gt_video_dir)):
+            seq_path = os.path.join(gt_video_dir, seq_dir)
+            if not os.path.isdir(seq_path):
+                continue
+            
+            # 获取该序列中的所有帧
+            gt_frames = sorted([f for f in os.listdir(seq_path) if f.endswith('.png')])
+            if len(gt_frames) < num_frames:
+                continue
+            
+            # 对应的 LR 序列
+            lr_seq_path = os.path.join(lr_video_dir, seq_dir)
+            if not os.path.isdir(lr_seq_path):
+                continue
+            
+            lr_frames = sorted([f for f in os.listdir(lr_seq_path) if f.endswith('.png')])
+            if len(lr_frames) != len(gt_frames):
+                continue
+            
+            self.sequences.append(seq_dir)
+            self.gt_frame_paths.append([os.path.join(seq_path, f) for f in gt_frames])
+            self.lr_frame_paths.append([os.path.join(lr_seq_path, f) for f in lr_frames])
+        
+        # 计算样本索引
+        self.sample_indices = []
+        for seq_idx, gt_frames in enumerate(self.gt_frame_paths):
+            num_samples = len(gt_frames) - num_frames + 1
+            for start_idx in range(num_samples):
+                self.sample_indices.append((seq_idx, start_idx))
+    
+    def __getitem__(self, batch_index: int) -> dict:
+        seq_idx, start_idx = self.sample_indices[batch_index]
+        gt_frame_paths = self.gt_frame_paths[seq_idx]
+        lr_frame_paths = self.lr_frame_paths[seq_idx]
+        
+        # 读取连续的多帧
+        frames_gt = []
+        frames_lr = []
+        
+        for i in range(self.num_frames):
+            gt_image = cv2.imread(gt_frame_paths[start_idx + i]).astype(np.float32) / 255.
+            lr_image = cv2.imread(lr_frame_paths[start_idx + i]).astype(np.float32) / 255.
+            
+            # 转 Y 通道
+            gt_y = imgproc.bgr_to_ycbcr(gt_image, only_use_y_channel=True)
+            lr_y = imgproc.bgr_to_ycbcr(lr_image, only_use_y_channel=True)
+            
+            # 转 Tensor
+            gt_y_tensor = imgproc.image_to_tensor(gt_y, False, False)
+            lr_y_tensor = imgproc.image_to_tensor(lr_y, False, False)
+            
+            frames_gt.append(gt_y_tensor)
+            frames_lr.append(lr_y_tensor)
+        
+        # 拼接
+        gt_multi_frame = torch.cat(frames_gt, dim=0)
+        lr_multi_frame = torch.cat(frames_lr, dim=0)
+        
+        return {"gt": gt_multi_frame, "lr": lr_multi_frame}
+    
+    def __len__(self) -> int:
+        return len(self.sample_indices)
 
 
 class PrefetchGenerator(threading.Thread):

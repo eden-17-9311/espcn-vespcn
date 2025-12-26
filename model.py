@@ -51,8 +51,8 @@ class ESPCN(nn.Module):
         # Initial model weights
         for module in self.modules():
             if isinstance(module, nn.Conv2d):
-                if module.in_channels == channels:
-                    # First layer with multi-channel input (Early Fusion)
+                # 第一层（多通道输入）使用较小的初始化
+                if module.in_channels == in_channels:
                     nn.init.normal_(module.weight.data,
                                     0.0,
                                     0.001)
