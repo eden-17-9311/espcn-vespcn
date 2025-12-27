@@ -129,16 +129,22 @@ step 4: 训练
   ✓ Test PSNR: XX.XX dB
   ✓ Test SSIM: 0.XXXX
 
-📁 生成的目录结构
+� 关于下采样
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-data/vimeo90k/
-├── sequences/                      # 原始 GT 训练集
-├── sequences_lrx4/                 # ✓ 自动生成
-├── test/
-│   ├── sequences/                  # 原始 GT 测试集
-│   └── sequences_lrx4/             # ✓ 自动生成
-├── sep_trainlist.txt               # ✓ 自动生成
-└── sep_testlist.txt                # ✓ 自动生成
+
+START_HERE.py 不会进行下采样，它只是使用说明文档。
+
+训练集 vs 测试集下采样：
+  • 训练集：运行时动态生成 LR（不需要预先下采样）
+  • 测试集：需要预先下采样 LR（模拟真实输入）
+
+只对测试集下采样（用于测试模型可行性）：
+  python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
+    --test_only --filter_seq_start 00001 --filter_seq_end 00005
+
+完整下采样（训练+测试）：
+  python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
+    --filter_seq_start 00001 --filter_seq_end 00005
 
 results/
 ├── ESPCN_x4_EarlyFusion_Vimeo90K/
@@ -157,12 +163,20 @@ samples/
 一键完成所有（推荐）：
   python setup_vimeo90k_test.py --data_dir ./data/vimeo90k --max_seq 5
 
+只处理测试集（用于验证模型可行性）：
+  python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
+    --test_only --filter_seq_start 00001 --filter_seq_end 00005
+
 分步骤执行：
-  # 1. 生成 LR 版本
+  # 1. 只对测试集下采样（用于测试模型可行性）
+  python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
+    --test_only --filter_seq_start 00001 --filter_seq_end 00005
+  
+  # 2. 生成 LR 版本（完整处理）
   python downsample_vimeo90k.py --input_dir ./data/vimeo90k/sequences \\
     --output_dir ./data/vimeo90k/sequences_lrx4 --max_seq 5
   
-  # 2. 生成列表文件
+  # 3. 生成列表文件
   python generate_vimeo90k_lists.py --input_dir ./data/vimeo90k/sequences \\
     --output_dir ./data/vimeo90k --max_seq 5
 

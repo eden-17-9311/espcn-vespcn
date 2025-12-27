@@ -45,6 +45,12 @@ def main():
   # 设置完整测试环境（处理前 5 个序列）
   python setup_vimeo90k_test.py --data_dir ./data/vimeo90k --max_seq 5
   
+  # 只对测试集进行下采样（00001-00005）
+  python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
+                                --test_only \\
+                                --filter_seq_start 00001 \\
+                                --filter_seq_end 00005
+  
   # 处理序列 00001 到 00005
   python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
                                 --filter_seq_start 00001 \\
@@ -64,6 +70,8 @@ def main():
                         help='跳过下采样步骤（如果已完成）')
     parser.add_argument('--skip_lists', action='store_true',
                         help='跳过列表生成步骤（如果已完成）')
+    parser.add_argument('--test_only', action='store_true',
+                        help='只对测试集进行下采样（跳过训练集）')
     
     args = parser.parse_args()
     
@@ -99,11 +107,13 @@ def main():
         print(f"最大序列数: {args.max_seq}")
     if args.filter_seq_start or args.filter_seq_end:
         print(f"序列范围: {args.filter_seq_start or '开始'} ~ {args.filter_seq_end or '结束'}")
+    if args.test_only:
+        print("模式: 只处理测试集")
     
     success = True
     
     # ============ Step 1: 生成训练集 LR ============
-    if not args.skip_downsample:
+    if not args.skip_downsample and not args.test_only:
         cmd = [
             sys.executable, "downsample_vimeo90k.py",
             "--input_dir", sequences_dir,
@@ -118,18 +128,27 @@ def main():
             cmd.extend(["--filter_seq_end", args.filter_seq_end])
         
         success = run_command(cmd, "生成训练集 LR 版本 (4x 下采样)") and success
-        
-        # ============ Step 2: 生成测试集 LR ============
+    elif args.test_only:
+        print("\n⊘ 跳过训练集下采样（测试模式）")
+    else:
+        print("\n⊘ 跳过下采样步骤")
+    
+    # ============ Step 2: 生成测试集 LR ============
+    if not args.skip_downsample:
         cmd = [
             sys.executable, "downsample_vimeo90k.py",
             "--input_dir", test_sequences_dir,
             "--output_dir", test_sequences_lr_dir,
             "--downscale_factor", "4"
         ]
+        if args.filter_seq_start:
+            cmd.extend(["--filter_seq_start", args.filter_seq_start])
+        if args.filter_seq_end:
+            cmd.extend(["--filter_seq_end", args.filter_seq_end])
         
         success = run_command(cmd, "生成测试集 LR 版本 (4x 下采样)") and success
     else:
-        print("\n⊘ 跳过下采样步骤")
+        print("\n⊘ 跳过测试集下采样步骤")
     
     # ============ Step 3: 生成列表文件 ============
     if not args.skip_lists:
