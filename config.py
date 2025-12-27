@@ -25,6 +25,8 @@ np.random.seed(0)
 device = torch.device("cuda", 0)
 # Turning on when the image size does not change during training can speed up training
 cudnn.benchmark = True
+# 启用 CUDNN 自动优化（可进一步加速）
+cudnn.enabled = True
 # When evaluating the performance of the SR model, whether to verify only the Y channel image data
 only_test_y_channel = False
 # Model architecture name
@@ -60,21 +62,49 @@ if mode == "train":
     
     # ==================== 视频数据集配置 ====================
     # 使用 TrainValidVideoDataset 时的路径配置
-    # Vimeo90K 格式示例：
+    # 支持标准 Vimeo90K 格式：
     # train_gt_video_dir/
-    #   sequence_1/
-    #     im1.png, im2.png, im3.png, ...
-    #   sequence_2/
-    #     im1.png, im2.png, im3.png, ...
+    #   00001/0001/im1.png, im2.png, im3.png, ...
+    #   00001/0002/im1.png, im2.png, im3.png, ...
+    #   00002/0001/...
+    train_gt_video_dir = f"./data/vimeo90k/sequences"
+    test_gt_video_dir = f"./data/vimeo90k/test/sequences"
+    test_lr_video_dir = f"./data/vimeo90k/test/sequences_lrx{upscale_factor}"
+    
+    # 列表文件：用于指定训练集和测试集
+    # sep_trainlist.txt 格式：
+    # 00001/0001
+    # 00001/0002
     # ...
-    train_gt_video_dir = f"./data/Vimeo90K/vimeo_septuplet/sequences"
-    test_gt_video_dir = f"./data/Vimeo90K/vimeo_septuplet/test/sequences"
-    test_lr_video_dir = f"./data/Vimeo90K/vimeo_septuplet/test/sequences_lrx{upscale_factor}"
+    # sep_testlist.txt 格式：
+    # 00001/0266
+    # 00001/0268
+    # ...
+    train_list_file = f"./data/vimeo90k/sep_trainlist.txt"
+    test_list_file = f"./data/vimeo90k/sep_testlist.txt"
     # ====================================================
 
     gt_image_size = int(17 * upscale_factor)
-    batch_size = 16
+    batch_size = 32
     num_workers = 4
+
+    # ==================== 性能优化配置 ====================
+    # 混合精度训练（FP16），显著加速，GPU显存占用减少
+    use_amp = True  # 启用混合精度训练
+    
+    # 梯度累积步数（用于模拟更大的 batch_size，但内存占用更低）
+    # 设置 > 1 可以在显存不足时保持等效的大 batch_size
+    gradient_accumulation_steps = 1
+    
+    # 启用 pin_memory 加速数据转移（需要足够的系统内存）
+    pin_memory = True
+    
+    # 预取队列大小（数据预加载）
+    prefetch_queue_size = 2
+    
+    # 启用异步数据加载
+    persistent_workers = True
+    # ====================================================
 
     # The address to load the pretrained model
     pretrained_model_weights_path = f""
@@ -83,7 +113,8 @@ if mode == "train":
     resume_model_weights_path = f""
 
     # Total num epochs
-    epochs = 3000
+    # 测试模式下设置为 1，生产环境可调为 100 或更高
+    epochs = 1
 
     # loss function weights
     loss_weights = 1.0

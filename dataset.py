@@ -89,17 +89,15 @@ class TrainValidImageDataset(Dataset):
 class TrainValidVideoDataset(Dataset):
     """Early Fusion Video Dataset: 读取真实的连续视频帧进行多帧融合训练
     
-    支持 Vimeo90K 格式：
-    dataset/
-        sequence_1/
-            im1.png (GT)
-            im2.png (GT)
-            im3.png (GT)
-            im4.png (GT)
+    支持标准 Vimeo90K 格式：
+    sequences/
+        00001/
+            0001/
+                im1.png, im2.png, im3.png, ...
+            0002/
+                im1.png, im2.png, im3.png, ...
             ...
-        sequence_2/
-            im1.png
-            im2.png
+        00002/
             ...
     
     Args:
@@ -108,6 +106,7 @@ class TrainValidVideoDataset(Dataset):
         upscale_factor (int): 超分倍率
         mode (str): "Train" 或 "Valid"
         num_frames (int): 每个样本使用的帧数（默认3）
+        file_list (str): 列表文件路径（格式: 00001/0001）
     """
 
     def __init__(
@@ -117,6 +116,7 @@ class TrainValidVideoDataset(Dataset):
             upscale_factor: int,
             mode: str,
             num_frames: int = 3,
+            file_list: str = None,
     ) -> None:
         super(TrainValidVideoDataset, self).__init__()
         self.gt_video_dir = gt_video_dir
@@ -125,27 +125,53 @@ class TrainValidVideoDataset(Dataset):
         self.mode = mode
         self.num_frames = num_frames
         
-        # 收集所有视频序列目录
-        self.sequences = []
-        self.frame_paths = []  # 每个序列的所有帧路径列表
+        # 收集所有子序列
+        self.sequence_paths = []
         
-        for seq_dir in sorted(os.listdir(gt_video_dir)):
-            seq_path = os.path.join(gt_video_dir, seq_dir)
-            if not os.path.isdir(seq_path):
-                continue
-            
-            # 获取该序列中的所有帧
-            frames = sorted([f for f in os.listdir(seq_path) if f.endswith('.png')])
-            if len(frames) < num_frames:
-                continue  # 跳过帧数不足的序列
-            
-            self.sequences.append(seq_dir)
-            frame_paths_for_seq = [os.path.join(seq_path, f) for f in frames]
-            self.frame_paths.append(frame_paths_for_seq)
+        if file_list and os.path.exists(file_list):
+            # 从文件列表加载（标准 Vimeo90K 格式）
+            print(f"从列表文件加载: {file_list}")
+            with open(file_list, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # 格式: 00001/0001
+                    seq_path = os.path.join(gt_video_dir, line)
+                    if os.path.isdir(seq_path):
+                        # 获取该序列中的所有帧
+                        frames = sorted([f for f in os.listdir(seq_path) if f.endswith('.png')])
+                        if len(frames) >= num_frames:
+                            self.sequence_paths.append((seq_path, frames))
+        else:
+            # 自动发现（简单格式）
+            print(f"自动发现序列目录")
+            for seq_dir in sorted(os.listdir(gt_video_dir)):
+                seq_path = os.path.join(gt_video_dir, seq_dir)
+                if not os.path.isdir(seq_path):
+                    continue
+                
+                # 检查是否为 Vimeo90K 嵌套格式（含有子目录）
+                subdirs = [d for d in os.listdir(seq_path) if os.path.isdir(os.path.join(seq_path, d))]
+                
+                if subdirs:
+                    # Vimeo90K 嵌套格式
+                    for subdir in sorted(subdirs):
+                        sub_seq_path = os.path.join(seq_path, subdir)
+                        frames = sorted([f for f in os.listdir(sub_seq_path) if f.endswith('.png')])
+                        if len(frames) >= num_frames:
+                            self.sequence_paths.append((sub_seq_path, frames))
+                else:
+                    # 简单格式（单层）
+                    frames = sorted([f for f in os.listdir(seq_path) if f.endswith('.png')])
+                    if len(frames) >= num_frames:
+                        self.sequence_paths.append((seq_path, frames))
+        
+        print(f"找到 {len(self.sequence_paths)} 个序列")
         
         # 计算总的训练样本数（每个序列产生多个样本）
         self.sample_indices = []
-        for seq_idx, frame_list in enumerate(self.frame_paths):
+        for seq_idx, (seq_path, frame_list) in enumerate(self.sequence_paths):
             # 每个序列可以产生 (总帧数 - num_frames + 1) 个样本
             num_samples = len(frame_list) - num_frames + 1
             for start_idx in range(num_samples):
@@ -153,14 +179,14 @@ class TrainValidVideoDataset(Dataset):
     
     def __getitem__(self, batch_index: int) -> dict:
         seq_idx, start_idx = self.sample_indices[batch_index]
-        frame_paths = self.frame_paths[seq_idx]
+        seq_path, frame_list = self.sequence_paths[seq_idx]
         
         # 读取连续的 num_frames 帧
         frames_gt = []
         frames_lr = []
         
         for i in range(self.num_frames):
-            frame_path = frame_paths[start_idx + i]
+            frame_path = os.path.join(seq_path, frame_list[start_idx + i])
             gt_image = cv2.imread(frame_path).astype(np.float32) / 255.
             
             # 数据增强（仅在 Train 模式）
@@ -239,12 +265,23 @@ class TestImageDataset(Dataset):
 
 
 class TestVideoDataset(Dataset):
-    """Early Fusion Video Dataset for testing: 读取真实的连续视频帧
+    """Early Fusion Video Dataset for testing: 支持标准 Vimeo90K 格式
+    
+    支持标准 Vimeo90K 格式：
+    test/sequences/
+        00001/
+            0266/
+                im1.png, im2.png, im3.png, ...
+    test/sequences_lrx4/
+        00001/
+            0266/
+                im1.png, im2.png, im3.png, ...
     
     Args:
         gt_video_dir (str): 包含视频帧序列的目录
         lr_video_dir (str): 包含LR视频帧序列的目录
         num_frames (int): 每个样本使用的帧数（默认3）
+        file_list (str): 列表文件路径（格式: 00001/0266）
     """
 
     def __init__(
@@ -252,59 +289,90 @@ class TestVideoDataset(Dataset):
             gt_video_dir: str,
             lr_video_dir: str,
             num_frames: int = 3,
+            file_list: str = None,
     ) -> None:
         super(TestVideoDataset, self).__init__()
         self.gt_video_dir = gt_video_dir
         self.lr_video_dir = lr_video_dir
         self.num_frames = num_frames
         
-        # 收集所有视频序列目录
-        self.sequences = []
-        self.gt_frame_paths = []
-        self.lr_frame_paths = []
+        # 收集所有子序列
+        self.sequence_paths = []
         
-        for seq_dir in sorted(os.listdir(gt_video_dir)):
-            seq_path = os.path.join(gt_video_dir, seq_dir)
-            if not os.path.isdir(seq_path):
-                continue
-            
-            # 获取该序列中的所有帧
-            gt_frames = sorted([f for f in os.listdir(seq_path) if f.endswith('.png')])
-            if len(gt_frames) < num_frames:
-                continue
-            
-            # 对应的 LR 序列
-            lr_seq_path = os.path.join(lr_video_dir, seq_dir)
-            if not os.path.isdir(lr_seq_path):
-                continue
-            
-            lr_frames = sorted([f for f in os.listdir(lr_seq_path) if f.endswith('.png')])
-            if len(lr_frames) != len(gt_frames):
-                continue
-            
-            self.sequences.append(seq_dir)
-            self.gt_frame_paths.append([os.path.join(seq_path, f) for f in gt_frames])
-            self.lr_frame_paths.append([os.path.join(lr_seq_path, f) for f in lr_frames])
+        if file_list and os.path.exists(file_list):
+            # 从文件列表加载
+            print(f"从列表文件加载: {file_list}")
+            with open(file_list, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # 格式: 00001/0266
+                    gt_seq_path = os.path.join(gt_video_dir, line)
+                    lr_seq_path = os.path.join(lr_video_dir, line)
+                    
+                    if os.path.isdir(gt_seq_path) and os.path.isdir(lr_seq_path):
+                        gt_frames = sorted([f for f in os.listdir(gt_seq_path) if f.endswith('.png')])
+                        lr_frames = sorted([f for f in os.listdir(lr_seq_path) if f.endswith('.png')])
+                        
+                        if len(gt_frames) >= self.num_frames and len(gt_frames) == len(lr_frames):
+                            self.sequence_paths.append((gt_seq_path, lr_seq_path, gt_frames))
+        else:
+            # 自动发现
+            print(f"自动发现序列目录")
+            for seq_dir in sorted(os.listdir(gt_video_dir)):
+                seq_path = os.path.join(gt_video_dir, seq_dir)
+                if not os.path.isdir(seq_path):
+                    continue
+                
+                # 检查是否为嵌套格式
+                subdirs = [d for d in os.listdir(seq_path) if os.path.isdir(os.path.join(seq_path, d))]
+                
+                if subdirs:
+                    # Vimeo90K 嵌套格式
+                    for subdir in sorted(subdirs):
+                        gt_sub_seq_path = os.path.join(seq_path, subdir)
+                        lr_sub_seq_path = os.path.join(self.lr_video_dir, seq_dir, subdir)
+                        
+                        if os.path.isdir(lr_sub_seq_path):
+                            gt_frames = sorted([f for f in os.listdir(gt_sub_seq_path) if f.endswith('.png')])
+                            lr_frames = sorted([f for f in os.listdir(lr_sub_seq_path) if f.endswith('.png')])
+                            
+                            if len(gt_frames) >= self.num_frames and len(gt_frames) == len(lr_frames):
+                                self.sequence_paths.append((gt_sub_seq_path, lr_sub_seq_path, gt_frames))
+                else:
+                    # 简单格式
+                    lr_seq_path = os.path.join(self.lr_video_dir, seq_dir)
+                    if os.path.isdir(lr_seq_path):
+                        gt_frames = sorted([f for f in os.listdir(seq_path) if f.endswith('.png')])
+                        lr_frames = sorted([f for f in os.listdir(lr_seq_path) if f.endswith('.png')])
+                        
+                        if len(gt_frames) >= self.num_frames and len(gt_frames) == len(lr_frames):
+                            self.sequence_paths.append((seq_path, lr_seq_path, gt_frames))
         
-        # 计算样本索引
+        print(f"找到 {len(self.sequence_paths)} 个测试序列")
+        
+        # 计算总样本数
         self.sample_indices = []
-        for seq_idx, gt_frames in enumerate(self.gt_frame_paths):
-            num_samples = len(gt_frames) - num_frames + 1
+        for seq_idx, (gt_seq_path, lr_seq_path, gt_frames) in enumerate(self.sequence_paths):
+            num_samples = len(gt_frames) - self.num_frames + 1
             for start_idx in range(num_samples):
                 self.sample_indices.append((seq_idx, start_idx))
     
     def __getitem__(self, batch_index: int) -> dict:
         seq_idx, start_idx = self.sample_indices[batch_index]
-        gt_frame_paths = self.gt_frame_paths[seq_idx]
-        lr_frame_paths = self.lr_frame_paths[seq_idx]
+        gt_seq_path, lr_seq_path, gt_frames = self.sequence_paths[seq_idx]
         
-        # 读取连续的多帧
+        # 读取连续的 num_frames 帧
         frames_gt = []
         frames_lr = []
         
         for i in range(self.num_frames):
-            gt_image = cv2.imread(gt_frame_paths[start_idx + i]).astype(np.float32) / 255.
-            lr_image = cv2.imread(lr_frame_paths[start_idx + i]).astype(np.float32) / 255.
+            gt_frame_path = os.path.join(gt_seq_path, gt_frames[start_idx + i])
+            lr_frame_path = os.path.join(lr_seq_path, gt_frames[start_idx + i])
+            
+            gt_image = cv2.imread(gt_frame_path).astype(np.float32) / 255.
+            lr_image = cv2.imread(lr_frame_path).astype(np.float32) / 255.
             
             # 转 Y 通道
             gt_y = imgproc.bgr_to_ycbcr(gt_image, only_use_y_channel=True)
@@ -317,7 +385,7 @@ class TestVideoDataset(Dataset):
             frames_gt.append(gt_y_tensor)
             frames_lr.append(lr_y_tensor)
         
-        # 拼接
+        # 拼接多帧
         gt_multi_frame = torch.cat(frames_gt, dim=0)
         lr_multi_frame = torch.cat(frames_lr, dim=0)
         

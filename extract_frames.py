@@ -53,7 +53,7 @@ def extract_frames_from_video(video_path, output_dir, start_frame=0, max_frames=
     return True
 
 
-def batch_extract_videos(input_dir, output_dir, max_frames=7):
+def batch_extract_videos(input_dir, output_dir, max_frames=7, test_pattern=None):
     """
     批量从视频目录提取帧
     
@@ -80,18 +80,29 @@ def batch_extract_videos(input_dir, output_dir, max_frames=7):
        │   │   ├── im2.png
        │   │   └── ...
        │   └── ...
+    
+    Args:
+        test_pattern (str): 测试集文件名模式（例如 'test' 表示文件名包含 'test' 的视频作为测试集）
     """
     
     os.makedirs(output_dir, exist_ok=True)
-    sequences_dir = os.path.join(output_dir, "sequences")
-    os.makedirs(sequences_dir, exist_ok=True)
     
     # 收集所有视频文件
     video_files = []
+    train_videos = []
+    test_videos = []
+    
     for root, dirs, files in os.walk(input_dir):
         for file in files:
             if file.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.flv')):
-                video_files.append(os.path.join(root, file))
+                full_path = os.path.join(root, file)
+                video_files.append(full_path)
+                
+                # 根据 pattern 分离训练/测试集
+                if test_pattern and test_pattern.lower() in file.lower():
+                    test_videos.append(full_path)
+                else:
+                    train_videos.append(full_path)
     
     if not video_files:
         print(f"错误: 在 {input_dir} 中未找到视频文件")
@@ -99,20 +110,63 @@ def batch_extract_videos(input_dir, output_dir, max_frames=7):
     
     print(f"找到 {len(video_files)} 个视频文件")
     
-    # 按 Vimeo90K 格式组织输出
+    if test_pattern:
+        print(f"  - 训练集: {len(train_videos)} 个")
+        print(f"  - 测试集: {len(test_videos)} 个")
+    
+    # 分别提取训练和测试集
     seq_idx = 1
     
-    for video_path in tqdm(video_files, desc="提取帧"):
-        seq_name = f"{seq_idx:05d}"  # 格式: 00001, 00002, ...
-        seq_output_dir = os.path.join(sequences_dir, seq_name)
+    if test_pattern and test_videos:
+        print(f"\n提取训练集...")
+        sequences_dir = os.path.join(output_dir, "sequences")
+        os.makedirs(sequences_dir, exist_ok=True)
         
-        if extract_frames_from_video(video_path, seq_output_dir, max_frames=max_frames):
-            seq_idx += 1
-        else:
-            print(f"跳过: {video_path}")
+        for video_path in tqdm(train_videos, desc="训练集"):
+            seq_name = f"{seq_idx:05d}"
+            seq_output_dir = os.path.join(sequences_dir, seq_name)
+            
+            if extract_frames_from_video(video_path, seq_output_dir, max_frames=max_frames):
+                seq_idx += 1
+            else:
+                print(f"跳过: {video_path}")
+        
+        # 测试集
+        print(f"\n提取测试集...")
+        test_sequences_dir = os.path.join(output_dir, "test", "sequences")
+        os.makedirs(test_sequences_dir, exist_ok=True)
+        
+        test_seq_idx = 1
+        for video_path in tqdm(test_videos, desc="测试集"):
+            seq_name = f"{test_seq_idx:05d}"
+            seq_output_dir = os.path.join(test_sequences_dir, seq_name)
+            
+            if extract_frames_from_video(video_path, seq_output_dir, max_frames=max_frames):
+                test_seq_idx += 1
+            else:
+                print(f"跳过: {video_path}")
+        
+        print(f"\n完成！")
+        print(f"  训练集: {seq_idx - 1} 个序列 -> {sequences_dir}")
+        print(f"  测试集: {test_seq_idx - 1} 个序列 -> {test_sequences_dir}")
     
-    print(f"\n完成！共提取 {seq_idx - 1} 个序列")
-    print(f"输出目录: {sequences_dir}")
+    else:
+        # 全部作为训练集
+        sequences_dir = os.path.join(output_dir, "sequences")
+        os.makedirs(sequences_dir, exist_ok=True)
+        
+        for video_path in tqdm(video_files, desc="提取帧"):
+            seq_name = f"{seq_idx:05d}"
+            seq_output_dir = os.path.join(sequences_dir, seq_name)
+            
+            if extract_frames_from_video(video_path, seq_output_dir, max_frames=max_frames):
+                seq_idx += 1
+            else:
+                print(f"跳过: {video_path}")
+        
+        print(f"\n完成！共提取 {seq_idx - 1} 个序列")
+        print(f"输出目录: {sequences_dir}")
+    
     return True
 
 
@@ -211,6 +265,13 @@ def main():
         help="LR 缩放倍数 (默认 4)"
     )
     
+    parser.add_argument(
+        "--test_pattern",
+        type=str,
+        default=None,
+        help="测试集文件名模式 (例如 'test' 表示文件名包含 'test' 的作为测试集)"
+    )
+    
     args = parser.parse_args()
     
     if args.mode == "extract":
@@ -218,7 +279,9 @@ def main():
         print(f"输入目录: {args.input_dir}")
         print(f"输出目录: {args.output_dir}")
         print(f"每个序列帧数: {args.max_frames}")
-        batch_extract_videos(args.input_dir, args.output_dir, args.max_frames)
+        if args.test_pattern:
+            print(f"测试集模式: '{args.test_pattern}'")
+        batch_extract_videos(args.input_dir, args.output_dir, args.max_frames, args.test_pattern)
     
     elif args.mode == "create_lr":
         print(f"生成 LR 帧...")

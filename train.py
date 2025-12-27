@@ -145,10 +145,12 @@ def load_dataset() -> [CUDAPrefetcher, CUDAPrefetcher]:
                                                 config.gt_image_size,
                                                 config.upscale_factor,
                                                 "Train",
-                                                num_frames=config.num_frames)
+                                                num_frames=config.num_frames,
+                                                file_list=config.train_list_file)
         test_datasets = TestVideoDataset(config.test_gt_video_dir,
                                         config.test_lr_video_dir,
-                                        num_frames=config.num_frames)
+                                        num_frames=config.num_frames,
+                                        file_list=config.test_list_file)
     else:
         raise ValueError(f"Unsupported dataset_type: {config.dataset_type}. Use 'image' or 'video'.")
 
@@ -246,13 +248,21 @@ def train(
         gt = batch_data["gt"].to(device=config.device, non_blocking=True)
         lr = batch_data["lr"].to(device=config.device, non_blocking=True)
 
+        # 对于多帧输入，只使用中心帧作为监督信号
+        # gt 形状: [batch, num_frames, H, W] -> 提取中心帧: [batch, 1, H, W]
+        if gt.shape[1] > 1:
+            center_frame_idx = config.num_frames // 2  # 中心帧的索引
+            gt_center = gt[:, center_frame_idx:center_frame_idx+1, :, :]
+        else:
+            gt_center = gt
+
         # Initialize generator gradients
         espcn_model.zero_grad(set_to_none=True)
 
         # Mixed precision training
         with amp.autocast():
             sr = espcn_model(lr)
-            loss = torch.mul(config.loss_weights, criterion(sr, gt))
+            loss = torch.mul(config.loss_weights, criterion(sr, gt_center))
 
         # Backpropagation
         scaler.scale(loss).backward()
@@ -314,13 +324,21 @@ def validate(
             gt = batch_data["gt"].to(device=config.device, non_blocking=True)
             lr = batch_data["lr"].to(device=config.device, non_blocking=True)
 
+            # 对于多帧输入，只使用中心帧进行评估
+            # gt 形状: [batch, num_frames, H, W] -> 提取中心帧: [batch, 1, H, W]
+            if gt.shape[1] > 1:
+                center_frame_idx = config.num_frames // 2
+                gt_center = gt[:, center_frame_idx:center_frame_idx+1, :, :]
+            else:
+                gt_center = gt
+
             # Use the generator model to generate a fake sample
             with amp.autocast():
                 sr = espcn_model(lr)
 
             # Statistical loss value for terminal data output
-            psnr = psnr_model(sr, gt)
-            ssim = ssim_model(sr, gt)
+            psnr = psnr_model(sr, gt_center)
+            ssim = ssim_model(sr, gt_center)
             psnres.update(psnr.item(), lr.size(0))
             ssimes.update(ssim.item(), lr.size(0))
 
