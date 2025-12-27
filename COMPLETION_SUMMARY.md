@@ -432,3 +432,54 @@ python setup_vimeo90k_test.py --data_dir ./data/vimeo90k --max_seq 5 && python t
 **版本：2.0**  
 **状态：✅ 生产就绪**
 
+---
+
+## 🔧 最新修正：标准 Vimeo90K 格式支持
+
+### 问题描述
+之前的实现错误地假设 Vimeo90K 数据被物理分割为 `train/` 和 `test/` 文件夹，但实际上：
+- 所有序列都在一个 `sequences/` 目录中
+- 通过 `sep_trainlist.txt` 和 `sep_testlist.txt` 文件区分训练集和测试集
+
+### 修改内容
+
+#### 1. config.py
+```python
+# 修改前
+test_gt_video_dir = f"./data/vimeo90k/test/sequences"
+test_lr_video_dir = f"./data/vimeo90k/test/sequences_lrx{upscale_factor}"
+
+# 修改后  
+test_gt_video_dir = f"./data/vimeo90k/sequences"  # 测试也从同一目录读取
+test_lr_video_dir = f"./data/vimeo90k/sequences_lrx{upscale_factor}"
+```
+
+#### 2. setup_vimeo90k_test.py
+- 移除 `--test_only` 参数（不再需要）
+- 不再检查 `test/sequences` 目录的存在性
+- 统一对 `sequences/` 目录进行下采样
+- 生成的 LR 数据保存在 `sequences_lrx4/` 中
+
+#### 3. 智能下采样策略
+- **训练集**：运行时动态生成 LR 数据（无需预先下采样）
+- **测试集**：根据 `sep_testlist.txt` 只对测试序列进行下采样
+- **目录结构**：所有 LR 数据统一存储在 `sequences_lrx4/` 目录
+
+#### 4. 验证脚本优化
+- 移除对不存在的 `test/` 目录的检查
+- 正确区分训练集和测试集的验证逻辑
+- 训练集 LR 可选（动态生成），测试集 LR 必须存在
+
+#### 5. Bug修复
+- 修复 `setup_vimeo90k_test.py` 中残留的 `args.test_only` 引用
+
+### 使用方法
+```bash
+# 处理前 5 个序列
+python setup_vimeo90k_test.py --data_dir ./data/vimeo90k --max_seq 5
+
+# 处理指定序列范围
+python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \
+  --filter_seq_start 00001 --filter_seq_end 00005
+```
+

@@ -23,10 +23,8 @@ def verify_directory_structure(data_dir):
     print("="*60)
     
     required_dirs = [
-        "sequences",
-        "sequences_lrx4",
-        "test/sequences",
-        "test/sequences_lrx4"
+        "sequences",           # 所有GT数据
+        "sequences_lrx4",      # LR数据（测试集需要）
     ]
     
     all_exist = True
@@ -93,6 +91,7 @@ def verify_sequences(data_dir, list_file, check_limit=5):
         entries = [line.strip() for line in f if line.strip()]
     
     all_valid = True
+    is_train = "train" in list_file.lower()
     
     for i, entry in enumerate(entries[:check_limit]):
         parts = entry.split('/')
@@ -103,9 +102,8 @@ def verify_sequences(data_dir, list_file, check_limit=5):
         
         seq_dir, sub_dir = parts
         
-        # 检查 GT 目录
-        gt_dir = os.path.join(data_dir, "sequences" if "sep_trainlist" in list_file else "test/sequences", 
-                              seq_dir, sub_dir)
+        # 所有GT数据都在sequences目录中
+        gt_dir = os.path.join(data_dir, "sequences", seq_dir, sub_dir)
         if not os.path.isdir(gt_dir):
             print(f"✗ 第 {i+1} 项GT目录不存在: {gt_dir}")
             all_valid = False
@@ -118,19 +116,32 @@ def verify_sequences(data_dir, list_file, check_limit=5):
             all_valid = False
             continue
         
-        # 检查 LR 目录
-        lr_dir = os.path.join(data_dir, "sequences_lrx4" if "sep_trainlist" in list_file else "test/sequences_lrx4",
-                              seq_dir, sub_dir)
+        # 对于训练集，检查LR目录是否存在（训练时动态生成，可能不存在）
+        # 对于测试集，必须有LR目录
+        lr_dir = os.path.join(data_dir, "sequences_lrx4", seq_dir, sub_dir)
         lr_frames = []
         if os.path.isdir(lr_dir):
             lr_frames = sorted([f for f in os.listdir(lr_dir) if f.startswith('im') and f.endswith('.png')])
         
-        if len(lr_frames) != len(frames):
-            print(f"⚠ 第 {i+1} 项LR帧数不匹配 (GT:{len(frames)} vs LR:{len(lr_frames)}): {entry}")
-            all_valid = False
-            continue
+        if is_train:
+            # 训练集：LR可以不存在（运行时生成）
+            if os.path.isdir(lr_dir) and len(lr_frames) != len(frames):
+                print(f"⚠ 第 {i+1} 项LR帧数不匹配 (GT:{len(frames)} vs LR:{len(lr_frames)}): {entry}")
+                # 对于训练集，这不是错误，只是警告
+        else:
+            # 测试集：必须有LR目录和匹配的帧数
+            if not os.path.isdir(lr_dir):
+                print(f"✗ 第 {i+1} 项LR目录不存在: {lr_dir}")
+                all_valid = False
+                continue
+            if len(lr_frames) != len(frames):
+                print(f"✗ 第 {i+1} 项LR帧数不匹配 (GT:{len(frames)} vs LR:{len(lr_frames)}): {entry}")
+                all_valid = False
+                continue
         
-        print(f"✓ 第 {i+1:2} 项正常: {entry:<15} ({len(frames)} 帧)")
+        status = "✓" if (is_train or len(lr_frames) == len(frames)) else "⚠"
+        lr_info = f" (LR:{len(lr_frames)})" if lr_frames else ""
+        print(f"{status} 第 {i+1:2} 项正常: {entry:<15} (GT:{len(frames)}{lr_info})")
     
     if len(entries) > check_limit:
         print(f"  ... 以及其他 {len(entries) - check_limit} 项 (未检查)")

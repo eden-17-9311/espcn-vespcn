@@ -52,8 +52,9 @@ def main():
 
 📁 前提条件：
   ✓ 已有标准 Vimeo90K 格式的数据目录
-  ✓ ./data/vimeo90k/sequences/          (GT 训练集)
-  ✓ ./data/vimeo90k/test/sequences/     (GT 测试集)
+  ✓ ./data/vimeo90k/sequences/          (所有序列都在这里)
+  ✓ ./data/vimeo90k/sep_trainlist.txt   (训练序列列表)
+  ✓ ./data/vimeo90k/sep_testlist.txt    (测试序列列表)
 
 🚀 三步启动：
 
@@ -134,17 +135,17 @@ step 4: 训练
 
 START_HERE.py 不会进行下采样，它只是使用说明文档。
 
-训练集 vs 测试集下采样：
+Vimeo90K 标准格式说明：
+  • 所有序列都在 ./data/vimeo90k/sequences/ 目录中
+  • 通过 sep_trainlist.txt 和 sep_testlist.txt 区分训练/测试集
+  • 只对测试集序列进行下采样（生成 LR 版本用于评估）
+
+下采样策略：
   • 训练集：运行时动态生成 LR（不需要预先下采样）
-  • 测试集：需要预先下采样 LR（模拟真实输入）
+  • 测试集：预先下采样到 ./data/vimeo90k/sequences_lrx4/
 
-只对测试集下采样（用于测试模型可行性）：
-  python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
-    --test_only --filter_seq_start 00001 --filter_seq_end 00005
-
-完整下采样（训练+测试）：
-  python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
-    --filter_seq_start 00001 --filter_seq_end 00005
+设置数据环境：
+  python setup_vimeo90k_test.py --data_dir ./data/vimeo90k
 
 results/
 ├── ESPCN_x4_EarlyFusion_Vimeo90K/
@@ -163,20 +164,12 @@ samples/
 一键完成所有（推荐）：
   python setup_vimeo90k_test.py --data_dir ./data/vimeo90k --max_seq 5
 
-只处理测试集（用于验证模型可行性）：
-  python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
-    --test_only --filter_seq_start 00001 --filter_seq_end 00005
-
 分步骤执行：
-  # 1. 只对测试集下采样（用于测试模型可行性）
-  python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
-    --test_only --filter_seq_start 00001 --filter_seq_end 00005
-  
-  # 2. 生成 LR 版本（完整处理）
+  # 1. 生成 LR 版本
   python downsample_vimeo90k.py --input_dir ./data/vimeo90k/sequences \\
     --output_dir ./data/vimeo90k/sequences_lrx4 --max_seq 5
   
-  # 3. 生成列表文件
+  # 2. 生成列表文件
   python generate_vimeo90k_lists.py --input_dir ./data/vimeo90k/sequences \\
     --output_dir ./data/vimeo90k --max_seq 5
 

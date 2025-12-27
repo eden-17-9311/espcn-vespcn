@@ -45,12 +45,6 @@ def main():
   # 设置完整测试环境（处理前 5 个序列）
   python setup_vimeo90k_test.py --data_dir ./data/vimeo90k --max_seq 5
   
-  # 只对测试集进行下采样（00001-00005）
-  python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
-                                --test_only \\
-                                --filter_seq_start 00001 \\
-                                --filter_seq_end 00005
-  
   # 处理序列 00001 到 00005
   python setup_vimeo90k_test.py --data_dir ./data/vimeo90k \\
                                 --filter_seq_start 00001 \\
@@ -59,7 +53,7 @@ def main():
     )
     
     parser.add_argument('--data_dir', type=str, required=True,
-                        help='Vimeo90K 数据目录（应包含 sequences 和 test 子目录）')
+                        help='Vimeo90K 数据目录（应包含 sequences 子目录）')
     parser.add_argument('--max_seq', type=int, default=None,
                         help='最多处理的序列数（用于快速测试）')
     parser.add_argument('--filter_seq_start', type=str, default=None,
@@ -70,8 +64,6 @@ def main():
                         help='跳过下采样步骤（如果已完成）')
     parser.add_argument('--skip_lists', action='store_true',
                         help='跳过列表生成步骤（如果已完成）')
-    parser.add_argument('--test_only', action='store_true',
-                        help='只对测试集进行下采样（跳过训练集）')
     
     args = parser.parse_args()
     
@@ -81,18 +73,13 @@ def main():
         return
     
     sequences_dir = os.path.join(args.data_dir, "sequences")
-    test_sequences_dir = os.path.join(args.data_dir, "test", "sequences")
     
     if not os.path.isdir(sequences_dir):
         print(f"❌ 错误：sequences 目录不存在: {sequences_dir}")
         return
     
-    if not os.path.isdir(test_sequences_dir):
-        print(f"❌ 错误：test/sequences 目录不存在: {test_sequences_dir}")
-        return
-    
     sequences_lr_dir = os.path.join(args.data_dir, "sequences_lrx4")
-    test_sequences_lr_dir = os.path.join(args.data_dir, "test", "sequences_lrx4")
+    # 注意：标准Vimeo90K格式中，测试数据也从sequences目录读取，通过列表文件区分
     
     print(f"\n{'='*60}")
     print(f"Vimeo90K 测试环境快速设置")
@@ -100,72 +87,76 @@ def main():
     print(f"数据目录: {args.data_dir}")
     print(f"GT 序列: {sequences_dir}")
     print(f"LR 输出: {sequences_lr_dir}")
-    print(f"测试 GT: {test_sequences_dir}")
-    print(f"测试 LR: {test_sequences_lr_dir}")
+    print(f"注: 测试数据也从 {sequences_dir} 读取，通过列表文件区分")
     
     if args.max_seq:
         print(f"最大序列数: {args.max_seq}")
     if args.filter_seq_start or args.filter_seq_end:
         print(f"序列范围: {args.filter_seq_start or '开始'} ~ {args.filter_seq_end or '结束'}")
-    if args.test_only:
-        print("模式: 只处理测试集")
     
     success = True
     
-    # ============ Step 1: 生成训练集 LR ============
-    if not args.skip_downsample and not args.test_only:
+    # ============ Step 1: 生成测试集 LR ============
+    if not args.skip_downsample:
+        # 从测试列表文件中读取需要下采样的序列
+        test_list_file = os.path.join(args.data_dir, "sep_testlist.txt")
+        test_sequences = []
+        
+        if os.path.exists(test_list_file):
+            with open(test_list_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        # 格式: 00001/0266 -> 只取序列号 00001
+                        seq_id = line.split('/')[0]
+                        if seq_id not in test_sequences:
+                            test_sequences.append(seq_id)
+        
+        print(f"发现 {len(test_sequences)} 个测试序列需要下采样")
+        
         cmd = [
             sys.executable, "downsample_vimeo90k.py",
             "--input_dir", sequences_dir,
             "--output_dir", sequences_lr_dir,
             "--downscale_factor", "4"
         ]
-        if args.max_seq:
-            cmd.extend(["--max_seq", str(args.max_seq)])
-        if args.filter_seq_start:
-            cmd.extend(["--filter_seq_start", args.filter_seq_start])
-        if args.filter_seq_end:
-            cmd.extend(["--filter_seq_end", args.filter_seq_end])
         
-        success = run_command(cmd, "生成训练集 LR 版本 (4x 下采样)") and success
-    elif args.test_only:
-        print("\n⊘ 跳过训练集下采样（测试模式）")
+        # 只对测试序列进行下采样
+        if test_sequences:
+            # 按序列排序并设置范围
+            test_sequences.sort()
+            cmd.extend(["--filter_seq_start", test_sequences[0]])
+            cmd.extend(["--filter_seq_end", test_sequences[-1]])
+        
+        success = run_command(cmd, f"生成测试集 LR 版本 (4x 下采样) - {len(test_sequences)} 个序列") and success
     else:
         print("\n⊘ 跳过下采样步骤")
     
-    # ============ Step 2: 生成测试集 LR ============
-    if not args.skip_downsample:
-        cmd = [
-            sys.executable, "downsample_vimeo90k.py",
-            "--input_dir", test_sequences_dir,
-            "--output_dir", test_sequences_lr_dir,
-            "--downscale_factor", "4"
-        ]
-        if args.filter_seq_start:
-            cmd.extend(["--filter_seq_start", args.filter_seq_start])
-        if args.filter_seq_end:
-            cmd.extend(["--filter_seq_end", args.filter_seq_end])
-        
-        success = run_command(cmd, "生成测试集 LR 版本 (4x 下采样)") and success
-    else:
-        print("\n⊘ 跳过测试集下采样步骤")
-    
-    # ============ Step 3: 生成列表文件 ============
+    # ============ Step 2: 生成列表文件 ============
     if not args.skip_lists:
-        cmd = [
-            sys.executable, "generate_vimeo90k_lists.py",
-            "--input_dir", sequences_dir,
-            "--output_dir", args.data_dir,
-            "--train_ratio", "0.8"
-        ]
-        if args.max_seq:
-            cmd.extend(["--max_seq", str(args.max_seq)])
-        if args.filter_seq_start:
-            cmd.extend(["--filter_seq_start", args.filter_seq_start])
-        if args.filter_seq_end:
-            cmd.extend(["--filter_seq_end", args.filter_seq_end])
+        # 检查列表文件是否已存在
+        train_list_file = os.path.join(args.data_dir, "sep_trainlist.txt")
+        test_list_file = os.path.join(args.data_dir, "sep_testlist.txt")
         
-        success = run_command(cmd, "生成训练/测试列表文件") and success
+        if os.path.exists(train_list_file) and os.path.exists(test_list_file):
+            print(f"\n✓ 列表文件已存在，跳过生成步骤")
+            print(f"  训练列表: {train_list_file}")
+            print(f"  测试列表: {test_list_file}")
+        else:
+            cmd = [
+                sys.executable, "generate_vimeo90k_lists.py",
+                "--input_dir", sequences_dir,
+                "--output_dir", args.data_dir,
+                "--train_ratio", "0.8"
+            ]
+            if args.max_seq:
+                cmd.extend(["--max_seq", str(args.max_seq)])
+            if args.filter_seq_start:
+                cmd.extend(["--filter_seq_start", args.filter_seq_start])
+            if args.filter_seq_end:
+                cmd.extend(["--filter_seq_end", args.filter_seq_end])
+            
+            success = run_command(cmd, "生成训练/测试列表文件") and success
     else:
         print("\n⊘ 跳过列表生成步骤")
     
@@ -178,8 +169,8 @@ def main():
         print("\n配置说明（config.py）：")
         print(f"  dataset_type = 'video'")
         print(f"  train_gt_video_dir = '{sequences_dir}'")
-        print(f"  test_gt_video_dir = '{test_sequences_dir}'")
-        print(f"  test_lr_video_dir = '{test_sequences_lr_dir}'")
+        print(f"  test_gt_video_dir = '{sequences_dir}'  # 测试也从同一目录")
+        print(f"  test_lr_video_dir = '{sequences_lr_dir}'")
         print(f"  train_list_file = '{os.path.join(args.data_dir, 'sep_trainlist.txt')}'")
         print(f"  test_list_file = '{os.path.join(args.data_dir, 'sep_testlist.txt')}'")
     else:

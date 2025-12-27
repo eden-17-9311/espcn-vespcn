@@ -63,13 +63,13 @@ if mode == "train":
     # ==================== 视频数据集配置 ====================
     # 使用 TrainValidVideoDataset 时的路径配置
     # 支持标准 Vimeo90K 格式：
-    # train_gt_video_dir/
+    # sequences/  (所有序列都在这里，通过列表文件区分训练/测试)
     #   00001/0001/im1.png, im2.png, im3.png, ...
     #   00001/0002/im1.png, im2.png, im3.png, ...
     #   00002/0001/...
     train_gt_video_dir = f"./data/vimeo90k/sequences"
-    test_gt_video_dir = f"./data/vimeo90k/test/sequences"
-    test_lr_video_dir = f"./data/vimeo90k/test/sequences_lrx{upscale_factor}"
+    test_gt_video_dir = f"./data/vimeo90k/sequences"  # 测试也从同一个sequences目录读取
+    test_lr_video_dir = f"./data/vimeo90k/sequences_lrx{upscale_factor}"  # LR测试数据
     
     # 列表文件：用于指定训练集和测试集
     # sep_trainlist.txt 格式：
