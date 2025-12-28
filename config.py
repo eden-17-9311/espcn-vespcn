@@ -27,6 +27,9 @@ device = torch.device("cuda", 0)
 cudnn.benchmark = True
 # 启用 CUDNN 自动优化（可进一步加速）
 cudnn.enabled = True
+# RTX 4090 优化：启用 TF32 加速（RTX 30系列支持）
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 # When evaluating the performance of the SR model, whether to verify only the Y channel image data
 only_test_y_channel = False
 # Model architecture name
@@ -85,8 +88,10 @@ if mode == "train":
     # ====================================================
 
     gt_image_size = int(17 * upscale_factor)
-    batch_size = 32
-    num_workers = 4
+    # RTX 4090 优化：大幅增加 batch_size 利用 24GB 显存
+    batch_size = 512  # 从 32 增加到 128
+    # RTX 4090 优化：增加数据加载并行度
+    num_workers = 16   # 从 4 增加到 8
 
     # ==================== 性能优化配置 ====================
     # 混合精度训练（FP16），显著加速，GPU显存占用减少
@@ -99,8 +104,8 @@ if mode == "train":
     # 启用 pin_memory 加速数据转移（需要足够的系统内存）
     pin_memory = True
     
-    # 预取队列大小（数据预加载）
-    prefetch_queue_size = 2
+    # RTX 4090 优化：增加预取队列大小，减少数据加载等待
+    prefetch_queue_size = 4  # 从 2 增加到 4
     
     # 启用异步数据加载
     persistent_workers = True
@@ -113,14 +118,15 @@ if mode == "train":
     resume_model_weights_path = f""
 
     # Total num epochs
-    # 测试模式下设置为 1，生产环境可调为 100 或更高
-    epochs = 1
+    # RTX 4090 优化：batch_size 增大，收敛更快，可减少 epochs
+    epochs = 50  # 从 1 增加到 50（实际训练时使用）
 
     # loss function weights
     loss_weights = 1.0
 
     # Optimizer parameter
-    model_lr = 1e-2
+    # RTX 4090 优化：batch_size 增加到 128，需要相应调整学习率
+    model_lr = 2e-2  # 从 1e-2 增加到 2e-2（约 sqrt(4) = 2 倍）
     model_momentum = 0.9
     model_weight_decay = 1e-4
     model_nesterov = False
@@ -129,7 +135,8 @@ if mode == "train":
     model_ema_decay = 0.999
 
     # Dynamically adjust the learning rate policy
-    lr_scheduler_milestones = [int(epochs * 0.1), int(epochs * 0.8)]
+    # RTX 4090 优化：根据新的 epochs 调整学习率衰减点
+    lr_scheduler_milestones = [int(epochs * 0.1), int(epochs * 0.8)]  # epochs=50时为 [5, 40]
     lr_scheduler_gamma = 0.1
 
     # How many iterations to print the training result

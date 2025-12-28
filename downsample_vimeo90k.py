@@ -64,7 +64,7 @@ def create_lr_frames(gt_dir, lr_dir, downscale_factor=4):
         print(f"✓ {frame_file}: {w}x{h} → {lr_w}x{lr_h}")
 
 
-def process_vimeo90k(input_dir, output_dir, downscale_factor=4, max_seq=None, filter_seq_start=None, filter_seq_end=None):
+def process_vimeo90k(input_dir, output_dir, downscale_factor=4, max_seq=None, filter_seq_start=None, filter_seq_end=None, seq_list=None, subseq_list=None):
     """
     处理 Vimeo90K 格式的目录结构
     
@@ -75,6 +75,8 @@ def process_vimeo90k(input_dir, output_dir, downscale_factor=4, max_seq=None, fi
         max_seq (int): 处理的最大序列数（用于测试）
         filter_seq_start (str): 过滤序列起始（如 '00001'）
         filter_seq_end (str): 过滤序列结束（如 '00005'）
+        seq_list (list): 要处理的序列列表（如 ['00001', '00003', '00005']）
+        subseq_list (list): 要处理的子序列列表（如 ['00001/0266', '00001/0268']）
     """
     seq_count = 0
     sub_count = 0
@@ -82,43 +84,80 @@ def process_vimeo90k(input_dir, output_dir, downscale_factor=4, max_seq=None, fi
     # 遍历一级序列目录（00001, 00002, ...）
     seq_dirs = sorted([d for d in os.listdir(input_dir) if os.path.isdir(os.path.join(input_dir, d))])
     
-    for seq_dir in seq_dirs:
-        # 过滤序列范围
-        if filter_seq_start and seq_dir < filter_seq_start:
-            continue
-        if filter_seq_end and seq_dir > filter_seq_end:
-            break
+    # 如果提供了子序列列表，直接处理这些子序列
+    if subseq_list:
+        print(f"处理指定的 {len(subseq_list)} 个子序列")
+        processed_subseqs = set()
         
-        seq_path = os.path.join(input_dir, seq_dir)
-        output_seq_path = os.path.join(output_dir, seq_dir)
-        
-        print(f"\n处理序列: {seq_dir}")
-        
-        # 遍历二级子序列目录（0001, 0002, ...）
-        sub_dirs = sorted([d for d in os.listdir(seq_path) if os.path.isdir(os.path.join(seq_path, d))])
-        
-        for sub_dir in sub_dirs:
-            sub_seq_path = os.path.join(seq_path, sub_dir)
-            output_sub_seq_path = os.path.join(output_seq_path, sub_dir)
-            
-            # 检查是否含有 im*.png 文件
-            frames = [f for f in os.listdir(sub_seq_path) if f.startswith('im') and f.endswith('.png')]
-            if not frames:
+        for subseq_path in subseq_list:
+            if subseq_path in processed_subseqs:
                 continue
+            processed_subseqs.add(subseq_path)
             
-            print(f"  └─ 处理子序列: {seq_dir}/{sub_dir} ({len(frames)} 帧)")
+            # 分解路径：00001/0266 -> seq_dir=00001, sub_dir=0266
+            parts = subseq_path.split('/')
+            if len(parts) != 2:
+                print(f"⚠ 跳过无效路径: {subseq_path}")
+                continue
+                
+            seq_dir, sub_dir = parts
+            gt_subseq_path = os.path.join(input_dir, seq_dir, sub_dir)
+            lr_subseq_path = os.path.join(output_dir, seq_dir, sub_dir)
             
-            # 创建 LR 版本
-            create_lr_frames(sub_seq_path, output_sub_seq_path, downscale_factor)
-            
-            sub_count += 1
+            if os.path.isdir(gt_subseq_path):
+                # 检查帧文件
+                frames = [f for f in os.listdir(gt_subseq_path) if f.startswith('im') and f.endswith('.png')]
+                if frames:
+                    print(f"  └─ 处理子序列: {subseq_path} ({len(frames)} 帧)")
+                    create_lr_frames(gt_subseq_path, lr_subseq_path, downscale_factor)
+                    sub_count += 1
+                else:
+                    print(f"⚠ 子序列无帧文件: {gt_subseq_path}")
+            else:
+                print(f"⚠ GT 子序列不存在: {gt_subseq_path}")
         
-        seq_count += 1
-        
-        # 检查是否达到最大序列数
-        if max_seq and seq_count >= max_seq:
-            print(f"\n已达到最大序列数 {max_seq}，停止处理")
-            break
+        seq_count = len(set(s.split('/')[0] for s in subseq_list))
+    else:
+        # 原来的逻辑：遍历所有目录
+        for seq_dir in seq_dirs:
+            # 过滤序列
+            if seq_list and seq_dir not in seq_list:
+                continue
+            elif filter_seq_start and seq_dir < filter_seq_start:
+                continue
+            elif filter_seq_end and seq_dir > filter_seq_end:
+                break
+            
+            seq_path = os.path.join(input_dir, seq_dir)
+            output_seq_path = os.path.join(output_dir, seq_dir)
+            
+            print(f"\n处理序列: {seq_dir}")
+            
+            # 遍历二级子序列目录（0001, 0002, ...）
+            sub_dirs = sorted([d for d in os.listdir(seq_path) if os.path.isdir(os.path.join(seq_path, d))])
+            
+            for sub_dir in sub_dirs:
+                sub_seq_path = os.path.join(seq_path, sub_dir)
+                output_sub_seq_path = os.path.join(output_seq_path, sub_dir)
+                
+                # 检查是否含有 im*.png 文件
+                frames = [f for f in os.listdir(sub_seq_path) if f.startswith('im') and f.endswith('.png')]
+                if not frames:
+                    continue
+                
+                print(f"  └─ 处理子序列: {seq_dir}/{sub_dir} ({len(frames)} 帧)")
+                
+                # 创建 LR 版本
+                create_lr_frames(sub_seq_path, output_sub_seq_path, downscale_factor)
+                
+                sub_count += 1
+            
+            seq_count += 1
+            
+            # 检查是否达到最大序列数
+            if max_seq and seq_count >= max_seq:
+                print(f"\n已达到最大序列数 {max_seq}，停止处理")
+                break
     
     print(f"\n=============== 下采样完成 ===============")
     print(f"处理序列数: {seq_count}")
@@ -162,6 +201,10 @@ def main():
                         help='过滤序列起始（如 00001）')
     parser.add_argument('--filter_seq_end', type=str, default=None,
                         help='过滤序列结束（如 00005）')
+    parser.add_argument('--seq_list', type=str, nargs='*', default=None,
+                        help='要处理的序列列表（如 00001 00003 00005）')
+    parser.add_argument('--subseq_list', type=str, nargs='*', default=None,
+                        help='要处理的子序列列表（如 00001/0266 00001/0268）')
     
     args = parser.parse_args()
     
@@ -178,6 +221,10 @@ def main():
         print(f"最大序列数: {args.max_seq}")
     if args.filter_seq_start or args.filter_seq_end:
         print(f"序列范围: {args.filter_seq_start or '开始'} ~ {args.filter_seq_end or '结束'}")
+    if args.seq_list:
+        print(f"指定序列: {', '.join(args.seq_list)}")
+    if args.subseq_list:
+        print(f"指定子序列: {', '.join(args.subseq_list)}")
     print("")
     
     # 执行下采样
@@ -187,7 +234,9 @@ def main():
         downscale_factor=args.downscale_factor,
         max_seq=args.max_seq,
         filter_seq_start=args.filter_seq_start,
-        filter_seq_end=args.filter_seq_end
+        filter_seq_end=args.filter_seq_end,
+        seq_list=args.seq_list,
+        subseq_list=args.subseq_list
     )
 
 

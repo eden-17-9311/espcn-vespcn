@@ -142,7 +142,7 @@ Vimeo90K 标准格式说明：
 
 下采样策略：
   • 训练集：运行时动态生成 LR（不需要预先下采样）
-  • 测试集：预先下采样到 ./data/vimeo90k/sequences_lrx4/
+  • 测试集：精确下采样 sep_testlist.txt 中列出的具体子序列
 
 设置数据环境：
   python setup_vimeo90k_test.py --data_dir ./data/vimeo90k

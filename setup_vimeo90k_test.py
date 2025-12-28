@@ -98,21 +98,19 @@ def main():
     
     # ============ Step 1: 生成测试集 LR ============
     if not args.skip_downsample:
-        # 从测试列表文件中读取需要下采样的序列
+        # 从测试列表文件中读取需要下采样的子序列
         test_list_file = os.path.join(args.data_dir, "sep_testlist.txt")
-        test_sequences = []
+        test_subseqs = []
         
         if os.path.exists(test_list_file):
             with open(test_list_file, 'r') as f:
                 for line in f:
                     line = line.strip()
                     if line:
-                        # 格式: 00001/0266 -> 只取序列号 00001
-                        seq_id = line.split('/')[0]
-                        if seq_id not in test_sequences:
-                            test_sequences.append(seq_id)
+                        # 格式: 00001/0266 -> 直接使用完整路径
+                        test_subseqs.append(line)
         
-        print(f"发现 {len(test_sequences)} 个测试序列需要下采样")
+        print(f"发现 {len(test_subseqs)} 个测试子序列需要下采样")
         
         cmd = [
             sys.executable, "downsample_vimeo90k.py",
@@ -121,14 +119,11 @@ def main():
             "--downscale_factor", "4"
         ]
         
-        # 只对测试序列进行下采样
-        if test_sequences:
-            # 按序列排序并设置范围
-            test_sequences.sort()
-            cmd.extend(["--filter_seq_start", test_sequences[0]])
-            cmd.extend(["--filter_seq_end", test_sequences[-1]])
+        # 只对测试子序列进行下采样
+        if test_subseqs:
+            cmd.extend(["--subseq_list"] + test_subseqs)
         
-        success = run_command(cmd, f"生成测试集 LR 版本 (4x 下采样) - {len(test_sequences)} 个序列") and success
+        success = run_command(cmd, f"生成测试集 LR 版本 (4x 下采样) - {len(test_subseqs)} 个子序列") and success
     else:
         print("\n⊘ 跳过下采样步骤")
     

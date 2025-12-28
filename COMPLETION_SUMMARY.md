@@ -470,8 +470,10 @@ test_lr_video_dir = f"./data/vimeo90k/sequences_lrx{upscale_factor}"
 - 正确区分训练集和测试集的验证逻辑
 - 训练集 LR 可选（动态生成），测试集 LR 必须存在
 
-#### 5. Bug修复
-- 修复 `setup_vimeo90k_test.py` 中残留的 `args.test_only` 引用
+#### 6. 精确子序列控制
+- **新增** `--subseq_list` 参数支持精确指定要处理的子序列
+- **修改** `setup_vimeo90k_test.py` 直接使用 `sep_testlist.txt` 中的完整路径
+- **确保** 只对测试列表中提到的具体子序列进行下采样
 
 ### 使用方法
 ```bash
